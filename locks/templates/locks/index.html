@@ -1,0 +1,768 @@
+{% extends 'base.html' %}
+
+{% block title %}Oracle Lock 監控 | Oracle 管理平台{% endblock %}
+
+{% block page_title %}Lock Table 監控{% endblock %}
+
+{% block nav_locks_active %}active text-white{% endblock %}
+
+{% block extra_head %}
+<style>
+    .countdown-ring {
+        position: relative;
+        width: 32px;
+        height: 32px;
+    }
+    .countdown-ring svg {
+        transform: rotate(-90deg);
+        width: 32px;
+        height: 32px;
+    }
+    .countdown-ring circle.track {
+        fill: none;
+        stroke: var(--vscode-border);
+        stroke-width: 3;
+    }
+    .countdown-ring circle.prog {
+        fill: none;
+        stroke: var(--vscode-accent);
+        stroke-width: 3;
+        stroke-linecap: round;
+        stroke-dasharray: 82.3; /* 2 * PI * 13.1 ≈ 82.3 */
+        stroke-dashoffset: 0;
+        transition: stroke-dashoffset 1s linear;
+    }
+    #countdown-num {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 10px;
+        font-weight: bold;
+        color: var(--vscode-accent);
+    }
+    .is-blocker td:first-child {
+        border-left: 4px solid #f14c4c;
+    }
+    
+    #loading-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(30, 30, 30, 0.8);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1050;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.2s;
+    }
+    #loading-overlay.visible {
+        opacity: 1;
+        pointer-events: all;
+    }
+    
+    table#lock-table th {
+        background-color: var(--vscode-panel) !important;
+        font-size: 12px;
+        color: #d4d4d4;
+    }
+    table#lock-table td {
+        font-family: Consolas, 'Courier New', monospace;
+        font-size: 12px;
+        color: #d4d4d4;
+    }
+    
+    /* 標題固定 16px，其餘全域 12px */
+    body {
+        font-size: 12px;
+    }
+    .form-control, .form-select, .btn, .input-group-text, .badge, .small, .text-muted {
+        font-size: 12px !important;
+    }
+    .card-title {
+        font-size: 12px !important;
+    }
+    h1.h3 {
+        font-size: 16px !important;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row g-3 mb-3">
+    <div class="col-12">
+        <div class="card border-secondary shadow-sm">
+            <div class="card-header d-flex justify-content-between align-items-center" style="background-color: var(--vscode-panel);">
+                <h5 class="card-title mb-0 fs-6"><i class="bi bi-hdd-network"></i> 連線設定</h5>
+                <span id="demo-badge" class="badge bg-warning text-dark d-none">DEMO 模式</span>
+            </div>
+            <div class="card-body">
+                <form id="conn-form" class="row gx-2 gy-2 align-items-center" onsubmit="event.preventDefault(); doConnect();">
+                    <div class="col-12 col-lg-auto">
+                        <label class="visually-hidden" for="f-host">HOST</label>
+                        <div class="input-group input-group-sm">
+                            <span class="input-group-text" style="min-width: 65px; justify-content: center;">HOST</span>
+                            <input type="text" class="form-control" id="f-host" value="{{ default_host }}" placeholder="hostname">
+                        </div>
+                    </div>
+                    <div class="col-6 col-lg-auto">
+                        <div class="input-group input-group-sm">
+                            <span class="input-group-text" style="min-width: 65px; justify-content: center;">PORT</span>
+                            <input type="text" class="form-control" id="f-port" value="1521">
+                        </div>
+                    </div>
+                    <div class="col-6 col-lg-auto">
+                        <div class="input-group input-group-sm">
+                            <span class="input-group-text" style="min-width: 65px; justify-content: center;">SVC</span>
+                            <select class="form-select" id="f-service">
+                                <option value="TOPPROD">TOPPROD</option>
+                                <option value="TOPTEST">TOPTEST</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="col-6 col-lg-auto">
+                        <div class="input-group input-group-sm">
+                            <span class="input-group-text" style="min-width: 65px; justify-content: center;">USER</span>
+                            <input type="text" class="form-control" id="f-user" value="system">
+                        </div>
+                    </div>
+                    <div class="col-6 col-lg-auto">
+                        <div class="input-group input-group-sm">
+                            <span class="input-group-text" style="min-width: 65px; justify-content: center;">PWD</span>
+                            <input type="password" class="form-control" id="f-pwd" value="sys_dsc">
+                        </div>
+                    </div>
+                    <div class="col-12 col-lg-auto">
+                        <div class="d-flex gap-2">
+                            <button type="submit" class="btn btn-sm btn-primary flex-grow-1 flex-lg-grow-0" id="btn-connect">
+                                <i class="bi bi-lightning-charge"></i> 連線
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-danger flex-grow-1 flex-lg-grow-0" id="btn-disconnect" onclick="doDisconnect()" disabled>
+                                <i class="bi bi-x-circle"></i> 斷線
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-3 mb-3">
+    <div class="col-12">
+        <div class="card border-secondary shadow-sm">
+            <div class="card-body py-2 d-flex flex-wrap align-items-center gap-3">
+                <div class="d-flex align-items-center gap-2">
+                    <span class="badge rounded-pill bg-secondary" id="status-dot">Idle</span>
+                    <span id="status-text" class="text-muted small">請填寫連線資訊</span>
+                </div>
+                <div class="vr bg-secondary"></div>
+                <button type="button" class="btn btn-sm btn-outline-success" id="btn-refresh" onclick="doRefresh()">
+                    <i class="bi bi-arrow-clockwise"></i> 手動更新
+                </button>
+                
+                <div class="d-flex align-items-center gap-2">
+                    <div class="countdown-ring" id="countdown-ring">
+                        <svg viewBox="0 0 32 32">
+                            <circle class="track" cx="16" cy="16" r="13.1"/>
+                            <circle class="prog"  cx="16" cy="16" r="13.1" id="ring-circle"/>
+                        </svg>
+                        <div id="countdown-num">30</div>
+                    </div>
+                    <small class="text-muted" id="last-update">自動更新</small>
+                </div>
+                <div class="ms-auto fw-bold" id="row-count"></div>
+            </div>
+            
+            <!-- Condition filter -->
+            <div class="card-footer py-2 border-secondary border-bottom-0" style="background-color: var(--vscode-panel);">
+                <div class="d-flex flex-wrap align-items-center gap-2" id="cond-filter">
+                    <span class="small fw-bold text-secondary me-2"><i class="bi bi-filter-circle"></i> 條件處理:</span>
+                    <div class="form-check form-check-inline mb-0">
+                        <input class="form-check-input type-filter" type="checkbox" id="chk-type-tm" value="TM" checked onchange="applyFilters()">
+                        <label class="form-check-label" for="chk-type-tm">TM</label>
+                    </div>
+                    <div class="form-check form-check-inline mb-0">
+                        <input class="form-check-input type-filter" type="checkbox" id="chk-type-tx" value="TX" onchange="applyFilters()">
+                        <label class="form-check-label" for="chk-type-tx">TX</label>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Column filter -->
+            <div class="card-footer py-2 border-secondary" style="background-color: var(--vscode-panel);">
+                <div class="d-flex flex-wrap align-items-center gap-2" id="col-filter">
+                    <span class="small fw-bold text-secondary me-2"><i class="bi bi-funnel"></i> 顯示欄位:</span>
+                    <!-- JS generated checkboxes -->
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-3">
+    <div class="col-12">
+        <div class="card border-secondary shadow-sm">
+            <div class="table-responsive" style="max-height: 60vh;">
+                <table class="table table-hover table-bordered border-secondary table-sm align-middle mb-0" id="lock-table">
+                    <thead id="table-head" style="position: sticky; top: 0; z-index: 10;">
+                        <!-- JS generated -->
+                    </thead>
+                    <tbody id="table-body">
+                        <!-- JS generated -->
+                    </tbody>
+                </table>
+                <div id="empty-state" class="text-center p-5 text-muted" style="display: none;">
+                    <i class="bi bi-check-circle display-4"></i>
+                    <h5 class="mt-3">無 Lock 資料</h5>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Loading Overlay -->
+<div id="loading-overlay">
+    <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
+        <span class="visually-hidden">Loading...</span>
+    </div>
+</div>
+
+<!-- Toasts Container -->
+<div class="toast-container position-fixed bottom-0 end-0 p-3" id="toast-container" style="z-index: 1060;"></div>
+
+<!-- Confirm Modal -->
+<div class="modal fade" id="confirmModal" tabindex="-1" aria-labelledby="confirmModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header border-bottom-0 pb-0">
+        <h5 class="modal-title text-danger" id="confirmModalLabel"><i class="bi bi-exclamation-triangle-fill"></i> 確認操作</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body py-4" id="modal-body">
+        <!-- Content -->
+      </div>
+      <div class="modal-footer border-top-0 pt-0">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+        <button type="button" class="btn btn-danger" id="modal-confirm-btn">確認執行</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const REFRESH_INTERVAL = 30;
+const CIRCUMFERENCE    = 2 * Math.PI * 13.1;
+
+const COLUMNS = [
+  { key: 'sid',         label: 'SID',        visible: true,  width: '60px'  },
+  { key: 'serial',      label: 'SERIAL#',    visible: true,  width: '70px'  },
+  { key: 'process',     label: 'PROCESS',    visible: true,  width: '80px'  },
+  { key: 'os_process',  label: 'OS PID',     visible: true,  width: '80px'  },
+  { key: 'username',    label: 'USERNAME',   visible: true,  width: '100px' },
+  { key: 'object_name', label: 'OBJECT',     visible: true,  width: '130px' },
+  { key: 'lock_type',   label: 'LOCK TYPE',  visible: false, width: '80px'  },
+  { key: 'lock_mode',   label: 'LOCK MODE',  visible: false, width: '110px' },
+  { key: 'request',     label: 'REQUEST',    visible: false, width: '90px'  },
+  { key: 'block',       label: 'BLOCKING',   visible: false, width: '80px'  },
+  { key: 'status',      label: 'STATUS',     visible: true,  width: '80px'  },
+  { key: 'osuser',      label: 'OS USER',    visible: false, width: '90px'  },
+  { key: 'machine',     label: 'MACHINE',    visible: false, width: '130px' },
+  { key: 'program',     label: 'PROGRAM',    visible: false, width: '150px' },
+  { key: 'logon_time',  label: 'LOGON TIME', visible: false, width: '150px' },
+  { key: 'object_type', label: 'OBJ TYPE',   visible: false, width: '80px'  },
+  { key: 'ctime',       label: '持續時間',    visible: true,  width: '80px'  },
+];
+
+let rows        = [];
+let connected   = {{ connected|yesno:"true,false" }};
+let demoMode    = {{ demo_mode|yesno:"true,false" }};
+let countdown   = REFRESH_INTERVAL;
+let refreshTimer = null;
+let sortKey     = null;
+let sortAsc     = true;
+let confirmModalIns = null;
+
+// 當連線成功時，紀錄這些資訊
+let sessionConnInfo = {
+    host: '',
+    port: '',
+    service: '',
+    user: ''
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+    confirmModalIns = new bootstrap.Modal(document.getElementById('confirmModal'));
+    
+    // 若 localStorage 有之前的資料，先帶入欄位中 (HOST已改由後端預設值控制)
+    // if (localStorage.getItem('db_host')) document.getElementById('f-host').value = localStorage.getItem('db_host');
+    if (localStorage.getItem('db_port')) document.getElementById('f-port').value = localStorage.getItem('db_port');
+    if (localStorage.getItem('db_service')) document.getElementById('f-service').value = localStorage.getItem('db_service');
+    if (localStorage.getItem('db_user')) document.getElementById('f-user').value = localStorage.getItem('db_user');
+
+    if (demoMode) {
+        document.getElementById('demo-badge').classList.remove('d-none');
+    }
+    
+    // 從 localStorage 建立 sessionConnInfo
+    if (connected && !demoMode) {
+        sessionConnInfo = {
+            host: localStorage.getItem('db_host') || document.getElementById('f-host').value,
+            port: localStorage.getItem('db_port') || document.getElementById('f-port').value,
+            service: localStorage.getItem('db_service') || document.getElementById('f-service').value,
+            user: localStorage.getItem('db_user') || document.getElementById('f-user').value
+        };
+    }
+
+    buildColumnFilter();
+    buildTableHead();
+    updateConnectionUI();
+
+    if (demoMode || connected) {
+        // 如果後端判斷為 connected (F5 重新讀取時)
+        // 向後端請求目前的連線狀態細節，或者單純恢復 UI
+        fetchLocks();
+    }
+    startCountdown();
+});
+
+function getFilteredRows() {
+    const showTM = document.getElementById('chk-type-tm').checked;
+    const showTX = document.getElementById('chk-type-tx').checked;
+    
+    return rows.filter(row => {
+        const t = (row.lock_type || '').toUpperCase();
+        if (t === 'TM') return showTM;
+        if (t === 'TX') return showTX;
+        // 如果是其他的 LOCK TYPE，不顯示
+        return false;
+    });
+}
+
+function applyFilters() {
+    renderRows(getFilteredRows());
+}
+
+function buildColumnFilter() {
+    const cf = document.getElementById('col-filter');
+    COLUMNS.forEach(col => {
+        const id = 'tog-' + col.key;
+        
+        const wrapper = document.createElement('div');
+        wrapper.className = 'form-check form-check-inline mb-0';
+        
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.className = 'form-check-input';
+        cb.id = id;
+        cb.checked = col.visible;
+        cb.addEventListener('change', () => {
+            col.visible = cb.checked;
+            buildTableHead();
+            renderRows(getFilteredRows());
+        });
+        
+        const lbl = document.createElement('label');
+        lbl.className = 'form-check-label small';
+        lbl.htmlFor = id;
+        lbl.textContent = col.label;
+        
+        wrapper.appendChild(cb);
+        wrapper.appendChild(lbl);
+        cf.appendChild(wrapper);
+    });
+}
+
+function buildTableHead() {
+    const thead = document.getElementById('table-head');
+    const visibleCols = COLUMNS.filter(c => c.visible);
+    let html = '<tr>';
+    visibleCols.forEach(col => {
+        let icon = '';
+        if (sortKey === col.key) {
+            icon = sortAsc ? ' <i class="bi bi-sort-up"></i>' : ' <i class="bi bi-sort-down"></i>';
+        }
+        html += `<th style="width:${col.width}; cursor:pointer;" onclick="sortBy('${col.key}')">${col.label}${icon}</th>`;
+    });
+    html += '<th style="width:180px;">操作</th></tr>';
+    thead.innerHTML = html;
+}
+
+function renderRows(data) {
+    const tbody = document.getElementById('table-body');
+    const empty = document.getElementById('empty-state');
+    const visibleCols = COLUMNS.filter(c => c.visible);
+
+    if (!data || data.length === 0) {
+        tbody.innerHTML = '';
+        empty.style.display = 'block';
+        document.getElementById('row-count').textContent = '0 筆 (Rows)';
+        return;
+    }
+
+    empty.style.display = 'none';
+    document.getElementById('row-count').textContent = `共 ${data.length} 筆`;
+
+    let html = '';
+    data.forEach(row => {
+        const isBlocker = (row.block || '').startsWith('1');
+        html += `<tr class="${isBlocker ? 'is-blocker table-danger' : ''}">`;
+
+        visibleCols.forEach(col => {
+            const val = row[col.key] || '';
+            html += `<td>${formatCell(col.key, val)}</td>`;
+        });
+
+        html += `<td>
+            <button class="btn btn-sm btn-outline-danger py-0 px-2 fs-7" onclick="confirmKillSession('${escHtml(row.sid)}','${escHtml(row.serial)}','${escHtml(row.username || '')}')" title="Kill Session">
+                <i class="bi bi-x-square"></i> Session
+            </button>
+            <button class="btn btn-sm btn-outline-secondary py-0 px-2 fs-7 ms-1" onclick="confirmKillPid('${escHtml(row.process)}','${escHtml(row.sid)}')" title="Kill PID">
+                OS PID
+            </button>
+        </td>`;
+
+        html += '</tr>';
+    });
+
+    tbody.innerHTML = html;
+}
+
+function formatCell(key, val) {
+    if (!val || val === '-' || val === 'None') {
+        if (key === 'block' || key === 'request') return `<span class="badge" style="background-color: var(--vscode-selection); color: #888;">—</span>`;
+        return `<span style="color: #6a9955;">${escHtml(val)}</span>`;
+    }
+
+    switch (key) {
+        case 'sid': return `<span class="fw-bold" style="color: #4fc1ff;">${escHtml(val)}</span>`;
+        case 'process': return `<span class="fw-bold" style="color: #dcdcaa;">${escHtml(val)}</span>`;
+        case 'os_process': return `<span class="fw-bold" style="color: #dcdcaa;">${escHtml(val)}</span>`;
+        case 'status':
+            return val.toUpperCase() === 'ACTIVE'
+                ? `<span class="badge text-bg-success text-dark">ACTIVE</span>`
+                : `<span class="badge text-bg-secondary">${escHtml(val)}</span>`;
+        case 'block':
+            return val.startsWith('1')
+                ? `<span class="badge text-bg-danger">BLOCKER</span>`
+                : `<span class="badge" style="background-color: var(--vscode-selection); color: #888;">—</span>`;
+        case 'lock_mode':
+        case 'request': {
+            const v = val.toLowerCase();
+            if (v.includes('exclusive')) return `<span class="badge text-bg-warning text-dark">${escHtml(val)}</span>`;
+            if (v.includes('row')) return `<span class="badge text-bg-info text-dark">${escHtml(val)}</span>`;
+            if (v.includes('share')) return `<span class="badge text-bg-primary">${escHtml(val)}</span>`;
+            if (v === 'none (0)' || v === 'none') return `<span class="badge" style="background-color: var(--vscode-selection); color: #888;">—</span>`;
+            return `<span class="badge text-bg-secondary border-secondary">${escHtml(val)}</span>`;
+        }
+        default:
+            return escHtml(val);
+    }
+}
+
+function sortBy(key) {
+    if (sortKey === key) {
+        sortAsc = !sortAsc;
+    } else {
+        sortKey = key;
+        sortAsc = true;
+    }
+    rows.sort((a, b) => {
+        const av = (a[key] || '').toString();
+        const bv = (b[key] || '').toString();
+        const num_a = parseFloat(av), num_b = parseFloat(bv);
+        if (!isNaN(num_a) && !isNaN(num_b)) {
+            return sortAsc ? num_a - num_b : num_b - num_a;
+        }
+        return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
+    });
+    buildTableHead();
+    renderRows(getFilteredRows());
+}
+
+function getCookie(name) {
+    let v = null;
+    document.cookie.split(';').forEach(c => {
+        const [k, val] = c.trim().split('=');
+        if (k === name) v = decodeURIComponent(val);
+    });
+    return v;
+}
+
+const CSRF = getCookie('csrftoken') || '';
+
+async function apiPost(url, body) {
+    const r = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': CSRF,
+        },
+        body: JSON.stringify(body),
+    });
+    return r.json();
+}
+
+async function doConnect() {
+    if (demoMode) {
+        showToast('⚠ Demo 模式 — oracledb 未安裝，無法連線真實 Oracle', 'warning');
+        return;
+    }
+    const host = document.getElementById('f-host').value.trim();
+    const port = document.getElementById('f-port').value.trim();
+    const service = document.getElementById('f-service').value.trim();
+    const user = document.getElementById('f-user').value.trim();
+    const pwd = document.getElementById('f-pwd').value;
+
+    if (!host || !port || !service || !user || !pwd) {
+        showToast('請填寫所有連線欄位', 'danger');
+        return;
+    }
+
+    setStatus('connecting', '連線中…');
+    showLoading(true);
+
+    try {
+        const res = await apiPost('/api/connect/', { host, port, service, user, password: pwd });
+        if (res.success) {
+            connected = true;
+            sessionConnInfo = { host, port, service, user };
+            
+            // 寫入 localStorage 讓 F5 後能讀回來 (密碼不寫入，保持安全)
+            localStorage.setItem('db_host', host);
+            localStorage.setItem('db_port', port);
+            localStorage.setItem('db_service', service);
+            localStorage.setItem('db_user', user);
+
+            updateConnectionUI();
+            showToast('✓ 連線成功', 'success');
+            await fetchLocks();
+        } else {
+            setStatus('error', '連線失敗');
+            showToast(`連線失敗：${res.error}`, 'danger');
+        }
+    } catch (e) {
+        setStatus('error', '連線異常');
+        showToast(`網路錯誤：${e.message}`, 'danger');
+    } finally {
+        showLoading(false);
+    }
+}
+
+async function doDisconnect() {
+    await apiPost('/api/disconnect/', {});
+    connected = false;
+    
+    // 清除欄位記憶
+    sessionConnInfo = {};
+    localStorage.removeItem('db_host');
+    localStorage.removeItem('db_port');
+    localStorage.removeItem('db_service');
+    localStorage.removeItem('db_user');
+
+    updateConnectionUI();
+    setStatus('idle', '已斷線');
+    rows = [];
+    renderRows([]);
+    showToast('已斷線', 'info');
+}
+
+async function fetchLocks(manual = false) {
+    if (!demoMode && !connected) return;
+    if (manual) showLoading(true);
+
+    try {
+        const res = await fetch('/api/locks/');
+        const data = await res.json();
+
+        if (data.success) {
+            rows = data.rows || [];
+            if (sortKey) {
+                rows.sort((a, b) => {
+                    const av = (a[sortKey] || '').toString();
+                    const bv = (b[sortKey] || '').toString();
+                    const na = parseFloat(av), nb = parseFloat(bv);
+                    if (!isNaN(na) && !isNaN(nb)) return sortAsc ? na-nb : nb-na;
+                    return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
+                });
+            }
+            renderRows(getFilteredRows());
+            document.getElementById('last-update').textContent = `最後更新: ${data.timestamp}`;
+            if (manual) showToast(`重抓完成，共 ${rows.length} 筆`, 'success');
+        } else {
+            if (manual) showToast(`查詢失敗：${data.error}`, 'danger');
+            if (data.error && data.error.includes('尚未連線')) {
+                connected = false;
+                updateConnectionUI();
+                setStatus('idle', '連線已中斷');
+            }
+        }
+    } catch (e) {
+        if (manual) showToast(`網路錯誤：${e.message}`, 'danger');
+    } finally {
+        if (manual) showLoading(false);
+    }
+}
+
+async function doRefresh() {
+    resetCountdown();
+    await fetchLocks(true);
+}
+
+function confirmKillSession(sid, serial, username) {
+    document.getElementById('modal-body').innerHTML = `即將執行：<br><br>
+        <div class="alert alert-danger font-monospace">ALTER SYSTEM KILL SESSION '${escHtml(sid)},${escHtml(serial)}' IMMEDIATE</div>
+        用戶：<strong>${escHtml(username)}</strong> &nbsp;｜&nbsp; SID: <strong>${escHtml(sid)}</strong><br><br>
+        此操作將立即終止該 Session，請確認後執行。`;
+    
+    document.getElementById('modal-confirm-btn').onclick = async () => {
+        confirmModalIns.hide();
+        showLoading(true);
+        try {
+            const res = await apiPost('/api/kill-session/', { sid, serial });
+            if (res.success) {
+                showToast(`✓ ${res.message}`, 'success');
+                setTimeout(() => fetchLocks(), 800);
+            } else {
+                showToast(`Kill Session 失敗：${res.error}`, 'danger');
+            }
+        } catch (e) {
+            showToast(`網路錯誤：${e.message}`, 'danger');
+        } finally {
+            showLoading(false);
+        }
+    };
+    confirmModalIns.show();
+}
+
+function confirmKillPid(pid, sid) {
+    document.getElementById('modal-body').innerHTML = `即將執行：<br><br>
+        <div class="alert alert-warning font-monospace">kill -9 ${escHtml(pid)}</div>
+        Oracle SID: <strong>${escHtml(sid)}</strong> &nbsp;｜&nbsp; OS PID: <strong>${escHtml(pid)}</strong><br><br>
+        ⚠ 此操作將直接終止 Unix Process，需有對應的 OS 權限。`;
+        
+    document.getElementById('modal-confirm-btn').onclick = async () => {
+        confirmModalIns.hide();
+        showLoading(true);
+        try {
+            const res = await apiPost('/api/kill-process/', { pid });
+            if (res.success) {
+                showToast(`✓ ${res.message}`, 'success');
+                setTimeout(() => fetchLocks(), 800);
+            } else {
+                showToast(`Kill Process 失敗：${res.error}`, 'danger');
+            }
+        } catch (e) {
+            showToast(`網路錯誤：${e.message}`, 'danger');
+        } finally {
+            showLoading(false);
+        }
+    };
+    confirmModalIns.show();
+}
+
+function startCountdown() {
+    countdown = REFRESH_INTERVAL;
+    updateRing();
+    if (refreshTimer) clearInterval(refreshTimer);
+    refreshTimer = setInterval(async () => {
+        countdown--;
+        updateRing();
+        if (countdown <= 0) {
+            countdown = REFRESH_INTERVAL;
+            await fetchLocks();
+        }
+    }, 1000);
+}
+
+function resetCountdown() {
+    countdown = REFRESH_INTERVAL;
+    updateRing();
+}
+
+function updateRing() {
+    const pct = countdown / REFRESH_INTERVAL;
+    const offset = CIRCUMFERENCE * (1 - pct);
+    document.getElementById('ring-circle').style.strokeDashoffset = offset;
+    document.getElementById('countdown-num').textContent = countdown;
+}
+
+function updateConnectionUI() {
+    document.getElementById('btn-connect').disabled = connected || demoMode;
+    document.getElementById('btn-disconnect').disabled = !connected || demoMode;
+    
+    // 把輸入框也鎖定，避免 F5 後仍然可以被亂寫
+    document.getElementById('f-host').disabled = connected;
+    document.getElementById('f-port').disabled = connected;
+    document.getElementById('f-service').disabled = connected;
+    document.getElementById('f-user').disabled = connected;
+    document.getElementById('f-pwd').disabled = connected;
+
+    if (demoMode) {
+        setStatus('demo', 'DEMO 模式 — oracledb 未安裝，顯示假資料');
+    } else if (connected) {
+        if (sessionConnInfo && sessionConnInfo.host) {
+            setStatus('connected', `已連線  ${sessionConnInfo.user}@${sessionConnInfo.host}:${sessionConnInfo.port}/${sessionConnInfo.service}`);
+        } else {
+            setStatus('connected', `已連線 (維持 Session 狀態)`);
+        }
+    } else {
+        setStatus('idle', '請填寫連線資訊後按 CONNECT');
+    }
+}
+
+function setStatus(state, text) {
+    const dot = document.getElementById('status-dot');
+    const span = document.getElementById('status-text');
+    
+    dot.className = 'badge rounded-pill ' + (
+        state === 'connected' ? 'text-bg-success' :
+        state === 'connecting' ? 'text-bg-warning border' :
+        state === 'error' ? 'text-bg-danger' :
+        state === 'demo' ? 'text-bg-info text-dark' : 'text-bg-secondary'
+    );
+    dot.textContent = state.toUpperCase();
+    span.textContent = text;
+}
+
+function showLoading(v) {
+    document.getElementById('loading-overlay').classList.toggle('visible', v);
+}
+
+function showToast(msg, type = 'primary') {
+    const ts = new Date().toLocaleTimeString('zh-TW', {hour12: false});
+    const toastHtml = `
+      <div class="toast align-items-center text-bg-${type} border-0 fade show" role="alert" aria-live="assertive" aria-atomic="true">
+        <div class="d-flex">
+          <div class="toast-body fw-bold">
+            [${ts}] ${msg}
+          </div>
+          <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+        </div>
+      </div>
+    `;
+    const container = document.getElementById('toast-container');
+    container.insertAdjacentHTML('beforeend', toastHtml);
+    const toastEl = container.lastElementChild;
+    const bsToast = new bootstrap.Toast(toastEl, { delay: 4000 });
+    bsToast.show();
+    
+    toastEl.addEventListener('hidden.bs.toast', () => {
+        toastEl.remove();
+    });
+}
+
+function escHtml(str) {
+    return String(str || '')
+      .replace(/&/g,'&amp;')
+      .replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;')
+      .replace(/'/g,'&#39;');
+}
+</script>
+{% endblock %}

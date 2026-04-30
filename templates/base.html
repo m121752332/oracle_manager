@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="zh-TW" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Oracle 管理平台{% endblock %}</title>
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN" crossorigin="anonymous">
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <style>
+        :root {
+            /* VS Code Colors */
+            --vscode-bg: #1e1e1e;
+            --vscode-panel: #252526;
+            --vscode-header: #333333;
+            --vscode-border: #3c3c3c;
+            --vscode-fg: #cccccc;
+            --vscode-accent: #007acc;
+            --vscode-accent-hover: #0062a3;
+            --vscode-selection: #37373d;
+            --vscode-table-header: #2d2d2d;
+            
+            /* Overriding Bootstrap UI variables */
+            --bs-body-bg: var(--vscode-bg);
+            --bs-body-color: var(--vscode-fg);
+            --bs-card-bg: var(--vscode-bg);
+            --bs-card-cap-bg: var(--vscode-panel);
+            --bs-border-color: var(--vscode-border);
+            --bs-primary: var(--vscode-accent);
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: var(--vscode-bg);
+            color: var(--vscode-fg);
+        }
+        
+        .sidebar {
+            position: fixed;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            z-index: 100;
+            padding: 48px 0 0; 
+            background-color: var(--vscode-panel);
+            border-right: 1px solid var(--vscode-border);
+            width: 250px;
+            transition: transform 0.2s ease;
+        }
+        
+        /* 收合狀態 */
+        .sidebar.sidebar-collapsed {
+            transform: translateX(-100%);
+        }
+
+        .sidebar a {
+            color: var(--vscode-fg);
+            text-decoration: none;
+            border-left: 3px solid transparent;
+            padding-left: 1rem !important;
+        }
+
+        .sidebar a:hover, .sidebar a.active {
+            color: #ffffff;
+            background-color: var(--vscode-selection);
+        }
+        
+        .sidebar a.active {
+            border-left-color: var(--vscode-accent);
+        }
+        
+        .sidebar-sticky {
+            position: relative;
+            top: 0;
+            height: calc(100vh - 48px);
+            padding-top: .5rem;
+            overflow-x: hidden;
+            overflow-y: auto; 
+        }
+
+        .navbar {
+            background-color: var(--vscode-header) !important;
+            border-bottom: 1px solid var(--vscode-border);
+            height: 48px;
+            z-index: 101; /* 確保在 sidebar 之上 */
+        }
+        
+        .navbar-brand {
+            padding-top: 0;
+            padding-bottom: 0;
+            font-size: 1rem;
+            background-color: transparent;
+            box-shadow: none;
+            color: var(--vscode-fg);
+        }
+
+        .navbar-brand:hover {
+            color: #ffffff;
+        }
+
+        .toggle-btn {
+            background: transparent;
+            border: none;
+            color: var(--vscode-fg);
+            padding: 0.5rem;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+
+        .toggle-btn:hover {
+            color: #ffffff;
+        }
+
+        main {
+            padding-top: 60px;
+            margin-left: 250px;
+            transition: margin-left 0.2s ease;
+            width: auto;
+        }
+        
+        main.main-expanded {
+            margin-left: 0;
+        }
+        
+        /* Webkit Scrollbar styled for VS Code */
+        ::-webkit-scrollbar { width: 10px; height: 10px; }
+        ::-webkit-scrollbar-track { background: var(--vscode-bg); }
+        ::-webkit-scrollbar-thumb { background: #464646; border: 1px solid var(--vscode-bg); }
+        ::-webkit-scrollbar-thumb:hover { background: #555555; }
+        ::-webkit-scrollbar-corner { background: var(--vscode-bg); }
+
+        @media (max-width: 767.98px) {
+            .sidebar {
+                top: 48px;
+                transform: translateX(-100%);
+            }
+            .sidebar.mobile-show {
+                transform: translateX(0);
+            }
+            main {
+                margin-left: 0 !important;
+            }
+        }
+    </style>
+    {% block extra_head %}{% endblock %}
+</head>
+<body>
+
+<header class="navbar navbar-dark sticky-top flex-md-nowrap p-0 shadow-sm d-flex align-items-center">
+    <div class="d-flex align-items-center px-3">
+        <!-- 桌機與平板的收合按鈕 (圖標比照 VS Code 左上角 Sidebar 開關) -->
+        <button id="sidebarToggle" class="toggle-btn d-none d-md-block" title="切換側邊欄 (Ctrl+B)">
+            <i class="bi bi-layout-sidebar"></i>
+        </button>
+        <!-- 手機版的收合按鈕 -->
+        <button id="mobileSidebarToggle" class="toggle-btn d-md-none">
+            <i class="bi bi-list fs-5"></i>
+        </button>
+        <a class="navbar-brand me-0" href="/">
+            <i class="bi bi-database-fill me-2"></i> Oracle 管理平台
+        </a>
+    </div>
+</header>
+
+<div class="container-fluid p-0">
+    <div class="d-flex">
+        <nav id="sidebarMenu" class="sidebar">
+            <div class="sidebar-sticky pt-3">
+                <h6 class="sidebar-heading d-flex justify-content-between align-items-center px-3 mt-4 mb-1 text-muted text-uppercase" style="font-size: 0.75rem;">
+                    <span>Explorer</span>
+                </h6>
+                <ul class="nav flex-column mb-2 mt-2">
+                    <li class="nav-item">
+                        <a class="nav-link py-1 {% block nav_locks_active %}{% endblock %}" href="/">
+                            <i class="bi bi-file-earmark-code me-2 text-primary"></i>
+                            Lock Table 監控
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link py-1" href="#">
+                            <i class="bi bi-file-earmark-code me-2 text-warning"></i>
+                            查詢紀錄 (開發中).html
+                        </a>
+                    </li>
+                </ul>
+            </div>
+        </nav>
+
+        <main id="mainContent" class="px-md-4 px-3 flex-grow-1">
+            <div class="pt-3 pb-2 mb-3 border-bottom border-secondary">
+                <h1 class="h3">{% block page_title %}總覽{% endblock %}</h1>
+            </div>
+
+            {% block content %}
+            <!-- 內容區 -->
+            {% endblock %}
+        </main>
+    </div>
+</div>
+
+<!-- Bootstrap 5 JS -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-C6RzsynM9kWDrMNeT87bh95OGNyZPhcTNXj1NW7RuBCsyN/o0jlpcV8Qyq46cDfL" crossorigin="anonymous"></script>
+
+<script>
+    document.addEventListener("DOMContentLoaded", function() {
+        const sidebar = document.getElementById('sidebarMenu');
+        const mainContent = document.getElementById('mainContent');
+        const deskToggleBtn = document.getElementById('sidebarToggle');
+        const mobileToggleBtn = document.getElementById('mobileSidebarToggle');
+
+        // 從 localStorage 讀取側邊欄狀態，讓使用者重整網頁後依然保持記憶
+        const sidebarState = localStorage.getItem('sidebarState');
+        if (sidebarState === 'collapsed' && window.innerWidth >= 768) {
+            sidebar.classList.add('sidebar-collapsed');
+            mainContent.classList.add('main-expanded');
+        }
+
+        // 桌機版切換
+        deskToggleBtn.addEventListener('click', function() {
+            sidebar.classList.toggle('sidebar-collapsed');
+            mainContent.classList.toggle('main-expanded');
+            
+            // 記錄狀態到 localStorage
+            if (sidebar.classList.contains('sidebar-collapsed')) {
+                localStorage.setItem('sidebarState', 'collapsed');
+            } else {
+                localStorage.setItem('sidebarState', 'expanded');
+            }
+        });
+
+        // 快捷鍵: 模擬 VS Code 的 Ctrl+B 收合側邊欄
+        document.addEventListener('keydown', function(event) {
+            if (event.ctrlKey && event.key.toLowerCase() === 'b') {
+                event.preventDefault(); // 防止與瀏覽器書籤熱鍵衝突
+                deskToggleBtn.click();
+            }
+        });
+
+        // 手機版切換
+        mobileToggleBtn.addEventListener('click', function() {
+            sidebar.classList.toggle('mobile-show');
+        });
+    });
+</script>
+{% block extra_js %}{% endblock %}
+</body>
+</html>

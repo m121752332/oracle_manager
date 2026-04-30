@@ -1,0 +1,21 @@
+# Python-generated files
+__pycache__/
+*.py[ocd]
+*.pytest_cache/
+build/
+dist/
+wheels/
+*.egg-info
+
+# VSCode
+.vscode/
+
+# Django-generated files
+*.log
+db.sqlite3
+
+# Virtual environments
+.venv
+.ruff_cache
+venv/
+.env
